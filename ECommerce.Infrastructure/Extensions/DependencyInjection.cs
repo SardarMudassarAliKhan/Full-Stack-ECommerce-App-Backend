@@ -1,4 +1,5 @@
-﻿using ECommerce.Application.Services.Interfaces;
+﻿using ECommerce.Application.Services.Implementations;
+using ECommerce.Application.Services.Interfaces;
 using ECommerce.Domain.Entities;
 using ECommerce.Infrastructure.Caching;
 using ECommerce.Infrastructure.Data;

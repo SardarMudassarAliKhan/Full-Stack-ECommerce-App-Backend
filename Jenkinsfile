@@ -1,44 +1,68 @@
 pipeline {
     agent any
-	 options {
+    
+    options {
         disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '5'))
     }  
+    
+    environment {
+        // Extracts 'dev', 'stage', or 'prod' from the end of your branch name
+        ENV_NAME = "${BRANCH_NAME.tokenize('-')[-1]}"
+        
+        // Dynamically assigns a unique host port for each environment
+        // Prod = 8202 | Stage = 8203 | Dev = 8204
+        PORT = "${ENV_NAME == 'prod' ? '8202' : ENV_NAME == 'stage' ? '8203' : '8204'}"
+        
+        // Sets the correct ASP.NET Core environment variable value
+        DOTNET_ENV = "${ENV_NAME == 'prod' ? 'Production' : ENV_NAME == 'stage' ? 'Staging' : 'Development'}"
+    }
+
     stages {
+        stage('Checkout') {
+            steps {
+                // Explicitly pulls the latest code for the active branch
+                checkout scm
+            }
+        }
+
         stage('Build') {
             steps {
                 script {
-                    // Remove previous image with the <none> tag  testing
-                    sh 'docker rmi ecom-backend:latest || true'
-
-                    // Build the new image with an explicit tag  
-                    sh 'docker build --no-cache -t ecom-backend:latest -f ECommerce.API/Dockerfile .'
-
-                    // Remove dangling images
-                    sh 'docker images -q --filter "dangling=true" | xargs docker rmi || true'
-
-                    // Clean up intermediate images
-                    sh 'docker image prune -f'
-
-                    // Custom cleanup script to remove any remaining <none> tagged images
-                    sh '''
-                        for image_id in $(docker images --filter "dangling=true" -q); do
-                            docker rmi $image_id || true
-                        done
-                    '''
+                    echo "Building Docker image for environment: ${ENV_NAME}..."
+                    
+                    // Tags the image cleanly using the environment suffix (e.g., ecom-backend:prod)
+                    sh "docker build --no-cache -t ecom-backend:${ENV_NAME} -f ECommerce.API/Dockerfile ."
                 }
             }
         }
+
         stage('Push and Deploy') {
             steps {                
                 script {
-                    // Stop and remove the container if it exists
-                    sh 'docker stop ecom-backend || true'
-                    sh 'docker rm ecom-backend || true'
+                    echo "Stopping and removing old container: ecom-backend-${ENV_NAME} if running..."
+                    sh "docker stop ecom-backend-${ENV_NAME} || true"
+                    sh "docker rm ecom-backend-${ENV_NAME} || true"
                     
-                    // Run the new container
-                    sh 'docker run -d --restart always --name ecom-backend --env "ASPNETCORE_ENVIRONMENT=Development" --network zohan -p 8202:8080 ecom-backend:latest'
+                    echo "Deploying new container on port ${PORT} with environment ${DOTNET_ENV}..."
+                    sh """
+                        docker run -d \
+                        --restart always \
+                        --name ecom-backend-${ENV_NAME} \
+                        --env "ASPNETCORE_ENVIRONMENT=${DOTNET_ENV}" \
+                        --network zohan \
+                        -p ${PORT}:8080 \
+                        ecom-backend:${ENV_NAME}
+                    """
+                }
+            }
+        }
 
-                     sh 'docker image prune -f'
+        stage('Cleanup') {
+            steps {
+                script {
+                    echo "Cleaning up dangling images and build artifacts..."
+                    sh 'docker image prune -f'
                 }
             }
         }

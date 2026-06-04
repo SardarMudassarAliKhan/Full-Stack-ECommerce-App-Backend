@@ -6,22 +6,10 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '5'))
     }  
     
-    environment {
-        // Extracts 'dev', 'stage', or 'prod' from the end of your branch name
-        ENV_NAME = "${BRANCH_NAME.tokenize('-')[-1]}"
-        
-        // Dynamically assigns a unique host port for each environment
-        // Prod = 8202 | Stage = 8203 | Dev = 8204
-        PORT = "${ENV_NAME == 'prod' ? '8202' : ENV_NAME == 'stage' ? '8203' : '8204'}"
-        
-        // Sets the correct ASP.NET Core environment variable value
-        DOTNET_ENV = "${ENV_NAME == 'prod' ? 'Production' : ENV_NAME == 'stage' ? 'Staging' : 'Development'}"
-    }
-
     stages {
-        stage('Checkout') {
+        // STEP 1: Crucial addition for pulling your Git repository files down
+        stage('Checkout Source') {
             steps {
-                // Explicitly pulls the latest code for the active branch
                 checkout scm
             }
         }
@@ -29,10 +17,11 @@ pipeline {
         stage('Build') {
             steps {
                 script {
-                    echo "Building Docker image for environment: ${ENV_NAME}..."
-                    
-                    // Tags the image cleanly using the environment suffix (e.g., ecom-backend:prod)
-                    sh "docker build --no-cache -t ecom-backend:${ENV_NAME} -f ECommerce.API/Dockerfile ."
+                    echo 'Cleaning up old production images...'
+                    sh 'docker rmi ecom-backend:latest || true'
+
+                    echo 'Building the new .NET 9 Docker image...'
+                    sh 'docker build --no-cache -t ecom-backend:latest -f ECommerce.API/Dockerfile .'
                 }
             }
         }
@@ -40,20 +29,12 @@ pipeline {
         stage('Push and Deploy') {
             steps {                
                 script {
-                    echo "Stopping and removing old container: ecom-backend-${ENV_NAME} if running..."
-                    sh "docker stop ecom-backend-${ENV_NAME} || true"
-                    sh "docker rm ecom-backend-${ENV_NAME} || true"
+                    echo 'Stopping old active container if it exists...'
+                    sh 'docker stop ecom-backend || true'
+                    sh 'docker rm ecom-backend || true'
                     
-                    echo "Deploying new container on port ${PORT} with environment ${DOTNET_ENV}..."
-                    sh """
-                        docker run -d \
-                        --restart always \
-                        --name ecom-backend-${ENV_NAME} \
-                        --env "ASPNETCORE_ENVIRONMENT=${DOTNET_ENV}" \
-                        --network zohan \
-                        -p ${PORT}:8080 \
-                        ecom-backend:${ENV_NAME}
-                    """
+                    echo 'Running new container on port 8202...'
+                    sh 'docker run -d --restart always --name ecom-backend --env "ASPNETCORE_ENVIRONMENT=Development" --network zohan -p 8202:8080 ecom-backend:latest'
                 }
             }
         }
@@ -61,7 +42,7 @@ pipeline {
         stage('Cleanup') {
             steps {
                 script {
-                    echo "Cleaning up dangling images and build artifacts..."
+                    echo 'Cleaning up dangling images...'
                     sh 'docker image prune -f'
                 }
             }

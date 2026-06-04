@@ -22,62 +22,44 @@ namespace ECommerce.Infrastructure.Extensions
             this IServiceCollection services,
             IConfiguration configuration)
         {
+            // ✅ Enforce SQL Server directly and catch missing connection string immediately
+            var conn = configuration.GetConnectionString("SqlServer")
+                ?? throw new InvalidOperationException("Production Connection string 'SqlServer' is missing from configurations.");
 
-            var provider = configuration["DatabaseProvider"] ?? "MySQL";
-
-            if (string.Equals(provider, "SqlServer", StringComparison.OrdinalIgnoreCase))
-            {
-                var conn = configuration.GetConnectionString("SqlServer");
-
-                services.AddDbContext<AppDbContext, SqlServerDbContext>(options =>
-                    options.UseSqlServer(conn));
-            }
-            else if (string.Equals(provider, "MySQL", StringComparison.OrdinalIgnoreCase))
-            {
-                var conn = configuration.GetConnectionString("MySQL");
-                services.AddDbContext<AppDbContext, MySqlDbContext>(options =>
-                    options.UseMySql(conn, ServerVersion.AutoDetect(conn)));
-            }
-            else if (string.Equals(provider, "PostgreSQL", StringComparison.OrdinalIgnoreCase))
-            {
-                var conn = configuration.GetConnectionString("PostgreSQL");
-                services.AddDbContext<AppDbContext, PostgresDbContext>(options =>
-                    options.UseNpgsql(conn));
-            }
-            else
-            {
-                throw new InvalidOperationException($"Unsupported provider: {provider}");
-            }
+            services.AddDbContext<AppDbContext, SqlServerDbContext>(options =>
+                options.UseSqlServer(conn));
 
             // ✅ Add Identity
             services.AddIdentity<ApplicationUser, IdentityRole<Guid>>()
                 .AddEntityFrameworkStores<AppDbContext>()
                 .AddDefaultTokenProviders();
 
-            // ✅ JWT Authentication setup
+            // ✅ JWT Authentication setup with Null Safeguard
             var jwtSettings = configuration.GetSection("JwtSettings");
-            var key = Encoding.UTF8.GetBytes(jwtSettings["Secret"]);
+            var secretKey = jwtSettings["Secret"]
+                ?? throw new InvalidOperationException("JWT Secret Key is missing in configurations.");
+            var key = Encoding.UTF8.GetBytes(secretKey);
 
             services.AddAuthentication(options =>
             {
                 options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
                 options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
             })
-               .AddJwtBearer(options =>
-               {
-                   options.RequireHttpsMetadata = false;
-                   options.SaveToken = true;
-                   options.TokenValidationParameters = new TokenValidationParameters
-                   {
-                       ValidateIssuer = true,
-                       ValidateAudience = true,
-                       ValidateLifetime = true,
-                       ValidateIssuerSigningKey = true,
-                       ValidIssuer = jwtSettings["Issuer"],
-                       ValidAudience = jwtSettings["Audience"],
-                       IssuerSigningKey = new SymmetricSecurityKey(key)
-                   };
-               });
+            .AddJwtBearer(options =>
+            {
+                options.RequireHttpsMetadata = false;
+                options.SaveToken = true;
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidateLifetime = true,
+                    ValidateIssuerSigningKey = true,
+                    ValidIssuer = jwtSettings["Issuer"],
+                    ValidAudience = jwtSettings["Audience"],
+                    IssuerSigningKey = new SymmetricSecurityKey(key)
+                };
+            });
 
             // ✅ Authorization
             services.AddAuthorization(options =>
@@ -86,21 +68,23 @@ namespace ECommerce.Infrastructure.Extensions
                 options.AddPolicy("CustomerOnly", policy => policy.RequireRole("Customer"));
             });
 
-            // ✅ Redis cache setup
+            // ✅ Fault-Tolerant Redis cache setup
             var redisConnection = configuration.GetConnectionString("Redis");
             if (!string.IsNullOrEmpty(redisConnection))
             {
+                var configurationOptions = ConfigurationOptions.Parse(redisConnection);
+                configurationOptions.AbortOnConnectFail = false; // Prevents crash if Redis boots slower than API
+
                 services.AddSingleton<IConnectionMultiplexer>(sp =>
-                    ConnectionMultiplexer.Connect(redisConnection));
+                    ConnectionMultiplexer.Connect(configurationOptions));
 
                 services.AddSingleton<ICacheService, RedisCacheService>();
             }
 
-            // RabbitMQ setup
+            // ✅ Infrastructure Components
             services.AddSingleton<IMessageQueueService, RabbitMQService>();
             services.AddScoped<IEmailSenderService, EmailSenderService>();
             services.AddScoped<IAuthService, AuthService>();
-
 
             return services;
         }

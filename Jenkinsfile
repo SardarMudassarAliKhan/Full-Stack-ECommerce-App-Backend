@@ -34,7 +34,7 @@ pipeline {
                     sh 'docker rm ecom-backend || true'
                     
                     echo 'Running new container on port 8202...'
-                    sh 'docker run -d --restart always --name ecom-backend --env "ASPNETCORE_ENVIRONMENT=Development" --network zohan -p 8202:8080 ecom-backend:latest'
+                    sh 'docker run -d --restart always --name ecom-backend --env "ASPNETCORE_ENVIRONMENT=Production" --network zohan -p 8202:8080 ecom-backend:latest'
                 }
             }
         }
